@@ -1,0 +1,21 @@
+{
+  "name": "game-ts",
+  "version": "1.0.0",
+  "description": "Game Roblox TypeScript",
+  "main": "index.js",
+  "scripts": {
+    "build": "rbxtsc",
+    "watch": "rbxtsc -w"
+  },
+  "dependencies": {
+    "@rbxts/react": "^17.1.0",
+    "@rbxts/react-roblox": "^17.1.0",
+    "@rbxts/services": "^1.5.0"
+  },
+  "devDependencies": {
+    "@rbxts/compiler-types": "^3.0.0-types.0",
+    "@rbxts/types": "^1.0.0",
+    "roblox-ts": "^3.0.0",
+    "typescript": "^5.0.0"
+  }
+}
