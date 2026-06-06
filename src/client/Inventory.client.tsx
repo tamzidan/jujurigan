@@ -1,94 +1,193 @@
-import React, { useState } from "@rbxts/react";
+import React, { useState, useEffect } from "@rbxts/react";
 import { createRoot } from "@rbxts/react-roblox";
-import { Players } from "@rbxts/services";
+import { Players, ReplicatedStorage, HttpService } from "@rbxts/services";
+import { CharacterData } from "shared/GameData/CharacterData";
+import { ItemData } from "shared/GameData/ItemData";
+import { PerkData } from "shared/GameData/PerkData";
 
-// Kategori item yang digunakan bersama
-const CATEGORIES = [
-    "Killer", "Skin Killer", "Perk Killer", 
-    "Item Baraya", "Perk Baraya", "Emote"
-];
+const Shared = ReplicatedStorage.WaitForChild("TS") as Folder;
+const Events = Shared.WaitForChild("Events") as Folder;
+const BuyRequest = Events.WaitForChild("BuyRequest") as RemoteEvent;
+const EquipRequest = Events.WaitForChild("EquipRequest") as RemoteEvent;
+
+const CATEGORIES = ["Killer", "Item Baraya", "Perk Killer", "Perk Baraya"];
+
+// Palet Modern / Monokrom
+const COLORS = {
+    bgApp: Color3.fromRGB(18, 18, 18),
+    bgSidebar: Color3.fromRGB(24, 24, 24),
+    bgCard: Color3.fromRGB(32, 32, 32),
+    btnBase: Color3.fromRGB(42, 42, 42),
+    btnActive: Color3.fromRGB(220, 220, 220),
+    btnAction: Color3.fromRGB(255, 255, 255),
+    textMain: Color3.fromRGB(245, 245, 245),
+    textSub: Color3.fromRGB(160, 160, 160),
+    textDark: Color3.fromRGB(20, 20, 20)
+};
+
+interface ItemProps {
+    id: string;
+    name: string;
+    cost: number;
+    type: string;
+}
 
 function MainUI() {
-    // State untuk Toko
     const [activeShopTab, setActiveShopTab] = useState(CATEGORIES[0]);
     const [isShopVisible, setIsShopVisible] = useState(false);
 
-    // State untuk Inventory
     const [activeInvTab, setActiveInvTab] = useState(CATEGORIES[0]);
     const [isInvVisible, setIsInvVisible] = useState(false);
 
+    const [teamName, setTeamName] = useState(Players.LocalPlayer.Team?.Name || "Arwah");
+    const [uang, setUang] = useState(0);
+    const [ownedJurig, setOwnedJurig] = useState<string[]>([]);
+
+    useEffect(() => {
+        const player = Players.LocalPlayer;
+
+        // 1. Monitor Tim (Hanya tim Arwah yang dapat melihat UI ini)
+        const teamConn = player.GetPropertyChangedSignal("Team").Connect(() => {
+            const currentTeam = player.Team?.Name || "Arwah";
+            setTeamName(currentTeam);
+            if (currentTeam !== "Arwah") {
+                setIsShopVisible(false);
+                setIsInvVisible(false);
+            }
+        });
+
+        // 2. Monitor Uang Pemain
+        const leaderstats = player.WaitForChild("leaderstats") as Folder;
+        const uangVal = leaderstats.WaitForChild("Uang") as IntValue;
+        setUang(uangVal.Value);
+        const uangConn = uangVal.GetPropertyChangedSignal("Value").Connect(() => {
+            setUang(uangVal.Value);
+        });
+
+        // 3. Monitor Item Kepemilikan (Jurig)
+        const updateOwned = () => {
+            const ownedAttr = player.GetAttribute("OwnedJurig") as string;
+            if (ownedAttr !== undefined) {
+                const decoded = HttpService.JSONDecode(ownedAttr) as string[];
+                setOwnedJurig(decoded);
+            }
+        };
+        updateOwned();
+        const attrConn = player.GetAttributeChangedSignal("OwnedJurig").Connect(updateOwned);
+
+        return () => {
+            teamConn.Disconnect();
+            uangConn.Disconnect();
+            attrConn.Disconnect();
+        };
+    }, []);
+
+    if (teamName !== "Arwah") return <></>;
+
+// Parsing data nyata
+    let shopData: ItemProps[] = [];
+    if (activeShopTab === "Killer") {
+        for (const [id, data] of pairs(CharacterData)) {
+            shopData.push({ id: id as string, name: data.Name, cost: data.Cost, type: "Character" });
+        }
+    } else if (activeShopTab === "Item Baraya") {
+        for (const [id, data] of pairs(ItemData)) {
+            shopData.push({ id: id as string, name: data.Name, cost: data.Cost, type: "Item" });
+        }
+    } else if (activeShopTab === "Perk Killer") {
+        for (const [id, data] of pairs(PerkData.Jurig)) {
+            shopData.push({ id: id as string, name: data.Name, cost: data.BaseCost, type: "PerkJurig" });
+        }
+    } else if (activeShopTab === "Perk Baraya") {
+        for (const [id, data] of pairs(PerkData.Baraya)) {
+            shopData.push({ id: id as string, name: data.Name, cost: data.BaseCost, type: "PerkBaraya" });
+        }
+    }
+
+    let invData: ItemProps[] = [];
+    if (activeInvTab === "Killer") {
+        for (const [id, data] of pairs(CharacterData)) {
+            if (ownedJurig.includes(id as string)) {
+                invData.push({ id: id as string, name: data.Name, cost: 0, type: "Character" });
+            }
+        }
+    }
+
     return (
         <screengui IgnoreGuiInset={true} ResetOnSpawn={false}>
-            {/* TOMBOL BUKA TOKO (Di Tengah-Kiri Layar) */}
+            {/* HUD: Informasi Uang di Lobby */}
+            {!isShopVisible && !isInvVisible && (
+                <textlabel
+                    Text={`Balance: ${uang}`}
+                    Size={new UDim2(0, 140, 0, 30)}
+                    Position={new UDim2(0, 20, 0.4, -40)}
+                    BackgroundColor3={COLORS.bgApp}
+                    TextColor3={COLORS.textMain}
+                    Font={Enum.Font.GothamBold}
+                    TextScaled={true}
+                >
+                    <uicorner CornerRadius={new UDim(0, 4)} />
+                    <uitextsizeconstraint MaxTextSize={14} MinTextSize={10} />
+                </textlabel>
+            )}
+
             {!isShopVisible && !isInvVisible && (
                 <textbutton
-                    Text="Buka Toko"
+                    Text="STORE"
                     Size={new UDim2(0, 140, 0, 45)}
                     Position={new UDim2(0, 20, 0.4, 0)}
-                    BackgroundColor3={Color3.fromRGB(200, 30, 30)}
-                    TextColor3={Color3.fromRGB(255, 255, 255)}
-                    Font={Enum.Font.GothamBold}
+                    BackgroundColor3={COLORS.btnBase}
+                    TextColor3={COLORS.textMain}
+                    Font={Enum.Font.GothamMedium}
                     TextScaled={true}
                     Event={{
                         MouseButton1Click: () => {
                             setIsShopVisible(true);
-                            setIsInvVisible(false); // Tutup inventory jika terbuka
+                            setIsInvVisible(false);
                         },
                     }}
                 >
-                    <uicorner CornerRadius={new UDim(0, 8)} />
-                    <uitextsizeconstraint MaxTextSize={18} MinTextSize={12} />
-                </textbutton>
-            )}
-
-            {/* TOMBOL BUKA INVENTORY (Di Bawah Tombol Toko) */}
-            {!isShopVisible && !isInvVisible && (
-                <textbutton
-                    Text="Buka Inventory"
-                    Size={new UDim2(0, 140, 0, 45)}
-                    Position={new UDim2(0, 20, 0.4, 55)}
-                    BackgroundColor3={Color3.fromRGB(30, 100, 200)} 
-                    TextColor3={Color3.fromRGB(255, 255, 255)}
-                    Font={Enum.Font.GothamBold}
-                    TextScaled={true}
-                    Event={{
-                        MouseButton1Click: () => {
-                            setIsInvVisible(true);
-                            setIsShopVisible(false); // Tutup toko jika terbuka
-                        },
-                    }}
-                >
-                    <uicorner CornerRadius={new UDim(0, 8)} />
+                    <uicorner CornerRadius={new UDim(0, 4)} />
                     <uitextsizeconstraint MaxTextSize={16} MinTextSize={12} />
                 </textbutton>
             )}
 
-            {/* ===================== WINDOW SHOP ===================== */}
+            {!isShopVisible && !isInvVisible && (
+                <textbutton
+                    Text="INVENTORY"
+                    Size={new UDim2(0, 140, 0, 45)}
+                    Position={new UDim2(0, 20, 0.4, 55)}
+                    BackgroundColor3={COLORS.btnBase} 
+                    TextColor3={COLORS.textMain}
+                    Font={Enum.Font.GothamMedium}
+                    TextScaled={true}
+                    Event={{
+                        MouseButton1Click: () => {
+                            setIsInvVisible(true);
+                            setIsShopVisible(false);
+                        },
+                    }}
+                >
+                    <uicorner CornerRadius={new UDim(0, 4)} />
+                    <uitextsizeconstraint MaxTextSize={16} MinTextSize={12} />
+                </textbutton>
+            )}
+
+            {/* ===================== SHOP ===================== */}
             {isShopVisible && (
                 <>
-                    {/* Background Gelap Toko */}
-                    <textbutton
-                        Size={new UDim2(1, 0, 1, 0)}
-                        BackgroundColor3={Color3.fromRGB(0, 0, 0)}
-                        BackgroundTransparency={0.6}
-                        Text=""
-                        BorderSizePixel={0}
-                        ZIndex={1}
-                        Event={{ MouseButton1Click: () => setIsShopVisible(false) }}
-                    />
+                    <textbutton Size={new UDim2(1, 0, 1, 0)} BackgroundColor3={COLORS.bgApp} BackgroundTransparency={0.4} Text="" BorderSizePixel={0} ZIndex={1} Event={{ MouseButton1Click: () => setIsShopVisible(false) }} />
 
-                    {/* Frame Utama Toko */}
-                    <frame Size={new UDim2(0.8, 0, 0.8, 0)} Position={new UDim2(0.1, 0, 0.1, 0)} BackgroundColor3={Color3.fromRGB(20, 20, 20)} BorderSizePixel={0} ZIndex={2} Active={true}>
-                        <uicorner CornerRadius={new UDim(0, 12)} />
+                    <frame Size={new UDim2(0.8, 0, 0.8, 0)} Position={new UDim2(0.1, 0, 0.1, 0)} BackgroundColor3={COLORS.bgApp} BorderSizePixel={0} ZIndex={2} Active={true}>
+                        <uicorner CornerRadius={new UDim(0, 8)} />
 
-                        {/* Sidebar Toko */}
-                        <frame Size={new UDim2(0.25, 0, 1, 0)} BackgroundColor3={Color3.fromRGB(15, 15, 15)} BorderSizePixel={0} ZIndex={3}>
-                            <uicorner CornerRadius={new UDim(0, 12)} />
+                        <frame Size={new UDim2(0.25, 0, 1, 0)} BackgroundColor3={COLORS.bgSidebar} BorderSizePixel={0} ZIndex={3}>
+                            <uicorner CornerRadius={new UDim(0, 8)} />
                             <uilistlayout SortOrder={Enum.SortOrder.LayoutOrder} Padding={new UDim(0.02, 0)} />
                             <uipadding PaddingTop={new UDim(0.05, 0)} PaddingLeft={new UDim(0.05, 0)} PaddingRight={new UDim(0.05, 0)} />
                             
-                            <textlabel Text="TOKO RITUAL" Size={new UDim2(1, 0, 0.12, 0)} BackgroundTransparency={1} TextColor3={Color3.fromRGB(200, 30, 30)} Font={Enum.Font.Creepster} TextScaled={true}>
-                                <uitextsizeconstraint MaxTextSize={40} MinTextSize={14} />
+                            <textlabel Text="STORE" Size={new UDim2(1, 0, 0.12, 0)} BackgroundTransparency={1} TextColor3={COLORS.textMain} Font={Enum.Font.GothamBold} TextScaled={true}>
+                                <uitextsizeconstraint MaxTextSize={24} MinTextSize={14} />
                             </textlabel>
 
                             {CATEGORIES.map((category) => (
@@ -96,66 +195,58 @@ function MainUI() {
                                     key={`shop_${category}`}
                                     Text={category}
                                     Size={new UDim2(1, 0, 0.1, 0)}
-                                    BackgroundColor3={activeShopTab === category ? Color3.fromRGB(80, 20, 20) : Color3.fromRGB(35, 35, 35)}
-                                    TextColor3={Color3.fromRGB(255, 255, 255)}
-                                    Font={Enum.Font.GothamBold}
+                                    BackgroundColor3={activeShopTab === category ? COLORS.btnActive : COLORS.btnBase}
+                                    TextColor3={activeShopTab === category ? COLORS.textDark : COLORS.textMain}
+                                    Font={Enum.Font.GothamMedium}
                                     TextScaled={true}
                                     ZIndex={4}
                                     Event={{ MouseButton1Click: () => setActiveShopTab(category) }}
                                 >
-                                    <uicorner CornerRadius={new UDim(0, 6)} />
-                                    <uitextsizeconstraint MaxTextSize={22} MinTextSize={10} />
+                                    <uicorner CornerRadius={new UDim(0, 4)} />
+                                    <uitextsizeconstraint MaxTextSize={16} MinTextSize={10} />
                                 </textbutton>
                             ))}
                         </frame>
 
-                        {/* Konten List Toko */}
-                        <scrollingframe Size={new UDim2(0.75, -20, 1, -20)} Position={new UDim2(0.25, 10, 0, 10)} BackgroundTransparency={1} ScrollBarThickness={6} CanvasSize={new UDim2(0, 0, 2, 0)} ZIndex={3}>
+                        <scrollingframe Size={new UDim2(0.75, -20, 1, -20)} Position={new UDim2(0.25, 10, 0, 10)} BackgroundTransparency={1} ScrollBarThickness={4} CanvasSize={new UDim2(0, 0, 2, 0)} ZIndex={3}>
                             <uigridlayout CellSize={new UDim2(0, 160, 0, 200)} CellPadding={new UDim2(0, 15, 0, 15)} SortOrder={Enum.SortOrder.LayoutOrder} />
                             
-                            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
-                                <frame key={`shop_item_${i}`} BackgroundColor3={Color3.fromRGB(40, 40, 40)} ZIndex={4}>
-                                    <uicorner CornerRadius={new UDim(0, 8)} />
-                                    <textlabel Text={`${activeShopTab} ${i}`} Size={new UDim2(1, -10, 0.2, 0)} Position={new UDim2(0, 5, 0.55, 0)} BackgroundTransparency={1} TextColor3={Color3.fromRGB(255, 255, 255)} Font={Enum.Font.GothamMedium} TextScaled={true} ZIndex={5} />
-                                    <textlabel Text="500 Ritual Points" Size={new UDim2(1, 0, 0.15, 0)} Position={new UDim2(0, 0, 0.8, 0)} BackgroundTransparency={1} TextColor3={Color3.fromRGB(255, 180, 50)} Font={Enum.Font.GothamBold} TextScaled={true} ZIndex={5} />
+                            {shopData.map((item) => {
+                                const isOwned = item.type === "Character" && ownedJurig.includes(item.id);
+                                return (
+                                <frame key={`shop_item_${item.id}`} BackgroundColor3={COLORS.bgCard} ZIndex={4}>
+                                    <uicorner CornerRadius={new UDim(0, 6)} />
+                                    <textlabel Text={item.name} Size={new UDim2(1, -10, 0.2, 0)} Position={new UDim2(0, 5, 0.55, 0)} BackgroundTransparency={1} TextColor3={COLORS.textMain} Font={Enum.Font.GothamMedium} TextScaled={true} ZIndex={5} />
+                                    <textlabel Text={isOwned ? "Owned" : `${item.cost} CR`} Size={new UDim2(1, 0, 0.15, 0)} Position={new UDim2(0, 0, 0.8, 0)} BackgroundTransparency={1} TextColor3={COLORS.textSub} Font={Enum.Font.GothamBold} TextScaled={true} ZIndex={5} />
+                                    
+                                    {!isOwned && (
+                                        <textbutton Text="Buy" Size={new UDim2(0.8, 0, 0.15, 0)} Position={new UDim2(0.1, 0, 0.1, 0)} BackgroundColor3={COLORS.btnAction} TextColor3={COLORS.textDark} Font={Enum.Font.GothamBold} TextScaled={true} ZIndex={5} Event={{ MouseButton1Click: () => BuyRequest.FireServer(item.type, item.id) }}>
+                                            <uicorner CornerRadius={new UDim(0, 4)} />
+                                        </textbutton>
+                                    )}
                                 </frame>
-                            ))}
+                                );
+                            })}
                         </scrollingframe>
-
-                        {/* Tombol X Toko */}
-                        <textbutton Text="X" Size={new UDim2(0, 35, 0, 35)} Position={new UDim2(1, -50, 0, 15)} BackgroundColor3={Color3.fromRGB(220, 50, 50)} TextColor3={Color3.fromRGB(255, 255, 255)} Font={Enum.Font.GothamBold} TextSize={20} ZIndex={5} Event={{ MouseButton1Click: () => setIsShopVisible(false) }}>
-                            <uicorner CornerRadius={new UDim(1, 0)} />
-                        </textbutton>
                     </frame>
                 </>
             )}
 
-            {/* ===================== WINDOW INVENTORY ===================== */}
+            {/* ===================== INVENTORY ===================== */}
             {isInvVisible && (
                 <>
-                    {/* Background Gelap Inventory */}
-                    <textbutton
-                        Size={new UDim2(1, 0, 1, 0)}
-                        BackgroundColor3={Color3.fromRGB(0, 0, 0)}
-                        BackgroundTransparency={0.6}
-                        Text=""
-                        BorderSizePixel={0}
-                        ZIndex={1}
-                        Event={{ MouseButton1Click: () => setIsInvVisible(false) }}
-                    />
+                    <textbutton Size={new UDim2(1, 0, 1, 0)} BackgroundColor3={COLORS.bgApp} BackgroundTransparency={0.4} Text="" BorderSizePixel={0} ZIndex={1} Event={{ MouseButton1Click: () => setIsInvVisible(false) }} />
 
-                    {/* Frame Utama Inventory */}
-                    <frame Size={new UDim2(0.8, 0, 0.8, 0)} Position={new UDim2(0.1, 0, 0.1, 0)} BackgroundColor3={Color3.fromRGB(20, 20, 20)} BorderSizePixel={0} ZIndex={2} Active={true}>
-                        <uicorner CornerRadius={new UDim(0, 12)} />
+                    <frame Size={new UDim2(0.8, 0, 0.8, 0)} Position={new UDim2(0.1, 0, 0.1, 0)} BackgroundColor3={COLORS.bgApp} BorderSizePixel={0} ZIndex={2} Active={true}>
+                        <uicorner CornerRadius={new UDim(0, 8)} />
 
-                        {/* Sidebar Inventory */}
-                        <frame Size={new UDim2(0.25, 0, 1, 0)} BackgroundColor3={Color3.fromRGB(15, 15, 15)} BorderSizePixel={0} ZIndex={3}>
-                            <uicorner CornerRadius={new UDim(0, 12)} />
+                        <frame Size={new UDim2(0.25, 0, 1, 0)} BackgroundColor3={COLORS.bgSidebar} BorderSizePixel={0} ZIndex={3}>
+                            <uicorner CornerRadius={new UDim(0, 8)} />
                             <uilistlayout SortOrder={Enum.SortOrder.LayoutOrder} Padding={new UDim(0.02, 0)} />
                             <uipadding PaddingTop={new UDim(0.05, 0)} PaddingLeft={new UDim(0.05, 0)} PaddingRight={new UDim(0.05, 0)} />
                             
-                            <textlabel Text="INVENTORY" Size={new UDim2(1, 0, 0.12, 0)} BackgroundTransparency={1} TextColor3={Color3.fromRGB(200, 200, 200)} Font={Enum.Font.Creepster} TextScaled={true}>
-                                <uitextsizeconstraint MaxTextSize={40} MinTextSize={14} />
+                            <textlabel Text="INVENTORY" Size={new UDim2(1, 0, 0.12, 0)} BackgroundTransparency={1} TextColor3={COLORS.textMain} Font={Enum.Font.GothamBold} TextScaled={true}>
+                                <uitextsizeconstraint MaxTextSize={24} MinTextSize={14} />
                             </textlabel>
 
                             {CATEGORIES.map((category) => (
@@ -163,38 +254,32 @@ function MainUI() {
                                     key={`inv_${category}`}
                                     Text={category}
                                     Size={new UDim2(1, 0, 0.1, 0)}
-                                    BackgroundColor3={activeInvTab === category ? Color3.fromRGB(40, 80, 150) : Color3.fromRGB(35, 35, 35)}
-                                    TextColor3={Color3.fromRGB(255, 255, 255)}
-                                    Font={Enum.Font.GothamBold}
+                                    BackgroundColor3={activeInvTab === category ? COLORS.btnActive : COLORS.btnBase}
+                                    TextColor3={activeInvTab === category ? COLORS.textDark : COLORS.textMain}
+                                    Font={Enum.Font.GothamMedium}
                                     TextScaled={true}
                                     ZIndex={4}
                                     Event={{ MouseButton1Click: () => setActiveInvTab(category) }}
                                 >
-                                    <uicorner CornerRadius={new UDim(0, 6)} />
-                                    <uitextsizeconstraint MaxTextSize={22} MinTextSize={10} />
+                                    <uicorner CornerRadius={new UDim(0, 4)} />
+                                    <uitextsizeconstraint MaxTextSize={16} MinTextSize={10} />
                                 </textbutton>
                             ))}
                         </frame>
 
-                        {/* Konten List Inventory */}
-                        <scrollingframe Size={new UDim2(0.75, -20, 1, -20)} Position={new UDim2(0.25, 10, 0, 10)} BackgroundTransparency={1} ScrollBarThickness={6} CanvasSize={new UDim2(0, 0, 2, 0)} ZIndex={3}>
+                        <scrollingframe Size={new UDim2(0.75, -20, 1, -20)} Position={new UDim2(0.25, 10, 0, 10)} BackgroundTransparency={1} ScrollBarThickness={4} CanvasSize={new UDim2(0, 0, 2, 0)} ZIndex={3}>
                             <uigridlayout CellSize={new UDim2(0, 160, 0, 200)} CellPadding={new UDim2(0, 15, 0, 15)} SortOrder={Enum.SortOrder.LayoutOrder} />
                             
-                            {[1, 2, 3, 4].map((i) => (
-                                <frame key={`inv_item_${i}`} BackgroundColor3={Color3.fromRGB(40, 40, 40)} ZIndex={4}>
-                                    <uicorner CornerRadius={new UDim(0, 8)} />
-                                    <textlabel Text={`${activeInvTab} Dimiliki ${i}`} Size={new UDim2(1, -10, 0.2, 0)} Position={new UDim2(0, 5, 0.55, 0)} BackgroundTransparency={1} TextColor3={Color3.fromRGB(255, 255, 255)} Font={Enum.Font.GothamMedium} TextScaled={true} ZIndex={5} />
-                                    <textbutton Text="Gunakan" Size={new UDim2(0.8, 0, 0.15, 0)} Position={new UDim2(0.1, 0, 0.8, 0)} BackgroundColor3={Color3.fromRGB(50, 150, 50)} TextColor3={Color3.fromRGB(255, 255, 255)} Font={Enum.Font.GothamBold} TextScaled={true} ZIndex={5} Event={{ MouseButton1Click: () => print(`Menggunakan ${activeInvTab} ${i}`) }}>
+                            {invData.map((item) => (
+                                <frame key={`inv_item_${item.id}`} BackgroundColor3={COLORS.bgCard} ZIndex={4}>
+                                    <uicorner CornerRadius={new UDim(0, 6)} />
+                                    <textlabel Text={item.name} Size={new UDim2(1, -10, 0.2, 0)} Position={new UDim2(0, 5, 0.55, 0)} BackgroundTransparency={1} TextColor3={COLORS.textMain} Font={Enum.Font.GothamMedium} TextScaled={true} ZIndex={5} />
+                                    <textbutton Text="Equip" Size={new UDim2(0.8, 0, 0.15, 0)} Position={new UDim2(0.1, 0, 0.8, 0)} BackgroundColor3={COLORS.btnAction} TextColor3={COLORS.textDark} Font={Enum.Font.GothamMedium} TextScaled={true} ZIndex={5} Event={{ MouseButton1Click: () => EquipRequest.FireServer(item.type, item.id) }}>
                                         <uicorner CornerRadius={new UDim(0, 4)} />
                                     </textbutton>
                                 </frame>
                             ))}
                         </scrollingframe>
-
-                        {/* Tombol X Inventory */}
-                        <textbutton Text="X" Size={new UDim2(0, 35, 0, 35)} Position={new UDim2(1, -50, 0, 15)} BackgroundColor3={Color3.fromRGB(220, 50, 50)} TextColor3={Color3.fromRGB(255, 255, 255)} Font={Enum.Font.GothamBold} TextSize={20} ZIndex={5} Event={{ MouseButton1Click: () => setIsInvVisible(false) }}>
-                            <uicorner CornerRadius={new UDim(1, 0)} />
-                        </textbutton>
                     </frame>
                 </>
             )}
