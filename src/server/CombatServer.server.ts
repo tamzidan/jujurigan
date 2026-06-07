@@ -1,9 +1,10 @@
 import { ReplicatedStorage, Players, Workspace, Debris } from "@rbxts/services";
 import { StateManager } from "../shared/Modules/StateManager";
+import { GetCharacterInfo, DEFAULT_CHARACTER_KEY } from "../shared/GameData/CharacterData";
 import RaycastHitbox from "@rbxts/raycast-hitbox";
 
-const Shared = ReplicatedStorage.WaitForChild("TS") as Folder;
-const Events = Shared.WaitForChild("Events") as Folder;
+const Shared        = ReplicatedStorage.WaitForChild("TS") as Folder;
+const Events        = Shared.WaitForChild("Events") as Folder;
 const RequestAction = Events.WaitForChild("RequestAction") as RemoteEvent;
 
 let NotifyClient = Events.FindFirstChild("NotifyClient") as RemoteEvent | undefined;
@@ -14,9 +15,7 @@ if (!NotifyClient) {
 }
 const Notify = NotifyClient as RemoteEvent;
 
-const INTERACT_RANGE              = 7;
-const HIT_ACTIVE_DURATION         = 0.6;
-const CHARGED_HIT_ACTIVE_DURATION = 0.9;
+const INTERACT_RANGE = 7;
 
 interface ActiveHitbox {
 	HitStart(): void;
@@ -26,44 +25,67 @@ interface ActiveHitbox {
 	RaycastParams: RaycastParams;
 }
 
-const jurigHitboxes = new Map<Player, ActiveHitbox>();
+const jurigHitboxes    = new Map<Player, ActiveHitbox>();
+const currentAttackTypes = new Map<Player, "Hit" | "ChargedHit">();
+
+// ---------------------------------------------------------
+// HELPER: Ambil key karakter yang sedang diequip player
+// ---------------------------------------------------------
+function getEquippedKey(player: Player): string {
+	const key = player.GetAttribute("EquippedJurig") as string | undefined;
+	return key ?? DEFAULT_CHARACTER_KEY;
+}
+
+// ---------------------------------------------------------
+// HELPER: Resolusi part untuk hitbox berdasarkan CharacterData
+// ---------------------------------------------------------
+function resolveHitboxPart(
+	character: Model,
+	hitboxPart: "Tool" | "RightArm",
+): BasePart | undefined {
+	if (hitboxPart === "Tool") {
+		const tool = character.FindFirstChildWhichIsA("Tool") as Tool | undefined;
+		if (tool) {
+			return tool.FindFirstChildWhichIsA("BasePart") as BasePart | undefined;
+		}
+		// Fallback ke Right Arm jika tidak ada Tool equipped
+		warn("[Hitbox] Tidak ada Tool — fallback ke Right Arm.");
+		return character.FindFirstChild("Right Arm") as BasePart | undefined;
+	} else {
+		// "RightArm": karakter tanpa senjata, hitbox di tangan
+		return character.FindFirstChild("Right Arm") as BasePart | undefined;
+	}
+}
 
 // ---------------------------------------------------------
 // SETUP HITBOX
 // ---------------------------------------------------------
 function setupHitbox(jurigPlayer: Player, character: Model) {
-	const tool = character.FindFirstChildWhichIsA("Tool") as Tool | undefined;
-	const attachPart = tool
-		? (tool.FindFirstChildWhichIsA("BasePart") as BasePart | undefined)
-		: (character.FindFirstChild("Right Arm") as BasePart | undefined);
+	const charKey  = getEquippedKey(jurigPlayer);
+	const charInfo = GetCharacterInfo(charKey);
 
+	const attachPart = resolveHitboxPart(character, charInfo.Combat.HitboxPart);
 	if (!attachPart) {
-		warn(`[Hitbox] Tidak ada senjata atau Right Arm di karakter ${jurigPlayer.Name}`);
+		warn(
+			`[Hitbox] Part tidak ditemukan untuk ${jurigPlayer.Name} ` +
+			`(karakter: ${charKey}, mode: ${charInfo.Combat.HitboxPart})`,
+		);
 		return;
 	}
 
-	const hitbox = new RaycastHitbox(attachPart);
-	hitbox.Visualizer = true; // Ganti false saat release
+	const hitbox       = new RaycastHitbox(attachPart);
+	hitbox.Visualizer  = true; // Ganti false saat release
 
-	// -------------------------------------------------------
-	// KUNCI: Set RaycastParams agar hitbox mendeteksi SEMUA
-	// BasePart di Workspace, termasuk tembok & lingkungan.
-	// Tanpa ini, banyak part dilewati begitu saja.
-	// -------------------------------------------------------
 	const rayParams = new RaycastParams();
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude;
-	// Exclude hanya karakter Jurig sendiri agar tidak self-hit
 	rayParams.FilterDescendantsInstances = [character];
 	hitbox.RaycastParams = rayParams;
 
-	// Satu listener OnHit untuk semua jenis hit.
-	// Tipe serangan (Hit/ChargedHit) dikontrol dari luar via flag.
 	hitbox.OnHit.Connect((hitPart: BasePart, humanoid?: Humanoid) => {
 		const currentAttackType = currentAttackTypes.get(jurigPlayer);
 		if (!currentAttackType) return;
 
 		if (humanoid) {
-			// Kena makhluk hidup
 			const targetChar = humanoid.Parent;
 			if (!targetChar) return;
 			const targetPlayer = Players.GetPlayerFromCharacter(targetChar);
@@ -72,14 +94,12 @@ function setupHitbox(jurigPlayer: Player, character: Model) {
 			const currentState = StateManager.GetState(targetPlayer);
 
 			if (currentAttackType === "ChargedHit") {
-				// ChargedHit langsung Knock apapun statenya
 				if (currentState === "Healthy" || currentState === "Injured") {
 					StateManager.SetState(targetPlayer, "Knock");
 					print(`${jurigPlayer.Name} ChargedHit ${targetPlayer.Name}! LANGSUNG TUMBANG!`);
 					Notify.FireClient(jurigPlayer, "HitFlesh");
 				}
 			} else {
-				// Hit biasa
 				if (currentState === "Healthy") {
 					StateManager.SetState(targetPlayer, "Injured");
 					print(`${jurigPlayer.Name} menebas ${targetPlayer.Name}! (Healthy → Injured)`);
@@ -92,12 +112,9 @@ function setupHitbox(jurigPlayer: Player, character: Model) {
 			}
 
 		} else {
-			// Kena benda mati — tembok, lantai, prop, dll
-			// Pastikan bukan bagian dari karakter Jurig atau Baraya
 			const partParent = hitPart.Parent;
 			if (!partParent) return;
 
-			// Skip jika part adalah bagian dari karakter pemain manapun
 			const isCharacterPart = Players.GetPlayers().some((p) => {
 				return p.Character !== undefined && hitPart.IsDescendantOf(p.Character);
 			});
@@ -109,13 +126,15 @@ function setupHitbox(jurigPlayer: Player, character: Model) {
 	});
 
 	jurigHitboxes.set(jurigPlayer, hitbox as unknown as ActiveHitbox);
-	print(`[Hitbox] Hitbox dipasang ke: ${attachPart.Name} milik ${jurigPlayer.Name}`);
+	print(
+		`[Hitbox] Dipasang ke: ${attachPart.Name} ` +
+		`(${jurigPlayer.Name} / ${charInfo.Name} / mode: ${charInfo.Combat.HitboxPart})`,
+	);
 }
 
-// Track tipe serangan aktif per player agar OnHit tahu konteksnya
-// tanpa perlu daftarkan listener baru setiap serangan
-const currentAttackTypes = new Map<Player, "Hit" | "ChargedHit">();
-
+// ---------------------------------------------------------
+// LIFECYCLE PEMAIN
+// ---------------------------------------------------------
 Players.PlayerAdded.Connect((player) => {
 	player.CharacterAdded.Connect((char) => {
 		task.wait(0.5);
@@ -127,6 +146,15 @@ Players.PlayerAdded.Connect((player) => {
 				setupHitbox(player, char);
 			}
 		});
+	});
+
+	// Re-setup hitbox ketika pemain mengganti karakter Jurig saat sudah spawn
+	player.GetAttributeChangedSignal("EquippedJurig").Connect(() => {
+		const char = player.Character;
+		if (char && player.Team?.Name === "Jurig") {
+			task.wait(0.1);
+			setupHitbox(player, char);
+		}
 	});
 });
 
@@ -155,18 +183,18 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 			const hitbox = jurigHitboxes.get(player);
 			if (!hitbox) return;
 
+			// Baca durasi hitbox dari CharacterData secara dinamis
+			const charKey  = getEquippedKey(player);
+			const charInfo = GetCharacterInfo(charKey);
 			const duration = action === "ChargedHit"
-				? CHARGED_HIT_ACTIVE_DURATION
-				: HIT_ACTIVE_DURATION;
+				? charInfo.Combat.ChargedHitDuration
+				: charInfo.Combat.HitDuration;
 
-			// Set tipe serangan sebelum HitStart agar OnHit tahu konteksnya
 			currentAttackTypes.set(player, action as "Hit" | "ChargedHit");
-
 			hitbox.HitStart();
 
 			task.delay(duration, () => {
 				hitbox.HitStop();
-				// Bersihkan tipe serangan setelah hitbox selesai
 				currentAttackTypes.delete(player);
 			});
 
@@ -177,8 +205,8 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 				for (const item of Workspace.GetDescendants()) {
 					if (item.Name === "TumbalHook" && item.IsA("BasePart")) {
 						if (myPos.sub(item.Position).Magnitude <= INTERACT_RANGE) {
-							const targetTorso = existingWeld.Part1 as Part;
-							const targetChar = targetTorso.Parent as Model;
+							const targetTorso  = existingWeld.Part1 as Part;
+							const targetChar   = targetTorso.Parent as Model;
 							const targetPlayer = Players.GetPlayerFromCharacter(targetChar);
 
 							if (targetPlayer) {
@@ -196,11 +224,11 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 									StateManager.SetState(targetPlayer, "Dead");
 								} else {
 									print(`${targetPlayer.Name} di-hook (Tahap ${currentHooks}/3)`);
-									const hookWeld = new Instance("WeldConstraint");
-									hookWeld.Name = "HookWeld";
-									hookWeld.Part0 = item;
-									hookWeld.Part1 = targetTorso;
-									hookWeld.Parent = targetTorso;
+									const hookWeld     = new Instance("WeldConstraint");
+									hookWeld.Name      = "HookWeld";
+									hookWeld.Part0     = item;
+									hookWeld.Part1     = targetTorso;
+									hookWeld.Parent    = targetTorso;
 
 									for (const part of targetChar.GetChildren()) {
 										if (part.IsA("BasePart")) part.Massless = false;
@@ -221,8 +249,10 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 					?.FindFirstChild("HumanoidRootPart") as Part | undefined;
 				if (!targetRoot) continue;
 
-				if (myPos.sub(targetRoot.Position).Magnitude <= INTERACT_RANGE
-					&& StateManager.GetState(targetPlayer) === "Knock") {
+				if (
+					myPos.sub(targetRoot.Position).Magnitude <= INTERACT_RANGE &&
+					StateManager.GetState(targetPlayer) === "Knock"
+				) {
 					print(`${player.Name} menggendong ${targetPlayer.Name}`);
 					StateManager.SetState(targetPlayer, "Carried");
 
@@ -230,16 +260,16 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 						.mul(new CFrame(0, 2, 1))
 						.mul(CFrame.Angles(math.rad(-90), 0, 0));
 
-					const weld = new Instance("WeldConstraint");
-					weld.Name = "CarryWeld";
-					weld.Part0 = rootPart;
-					weld.Part1 = targetRoot;
-					weld.Parent = char;
+					const weld    = new Instance("WeldConstraint");
+					weld.Name     = "CarryWeld";
+					weld.Part0    = rootPart;
+					weld.Part1    = targetRoot;
+					weld.Parent   = char;
 
 					for (const part of targetPlayer.Character!.GetChildren()) {
 						if (part.IsA("BasePart")) {
-							part.Massless = true;
-							part.CanCollide = false;
+							part.Massless    = true;
+							part.CanCollide  = false;
 						}
 					}
 					break;

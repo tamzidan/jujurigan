@@ -1,27 +1,28 @@
 import { ContextActionService, ReplicatedStorage, Players, RunService, Workspace, Debris } from "@rbxts/services";
+import { GetCharacterInfo, DEFAULT_CHARACTER_KEY } from "../shared/GameData/CharacterData";
 
 const player = Players.LocalPlayer;
 
-const Shared = ReplicatedStorage.WaitForChild("TS") as Folder;
-const Events = Shared.WaitForChild("Events") as Folder;
+const Shared        = ReplicatedStorage.WaitForChild("TS") as Folder;
+const Events        = Shared.WaitForChild("Events") as Folder;
 const RequestAction = Events.WaitForChild("RequestAction") as RemoteEvent;
-const NotifyClient = Events.WaitForChild("NotifyClient") as RemoteEvent; // Server → Client untuk suara
+const NotifyClient  = Events.WaitForChild("NotifyClient") as RemoteEvent;
 
 const ATTACK_COOLDOWN = 1.0;
-const CHARGE_TIME     = 0.5;  // Minimal tahan untuk ChargedHit
-const MAX_CHARGE_TIME = 2.0;  // Batas maksimal charge — otomatis release
+const CHARGE_TIME     = 0.5;
+const MAX_CHARGE_TIME = 2.0;
 const REPAIR_RANGE    = 8;
 const PALLET_RANGE    = 6;
 const VAULT_RANGE     = 4;
 const INTERACT_RANGE  = 7;
 
 // Speed
-const BASE_SPEED             = 16;
-const CHARGE_SPEED           = 20;
-const HIT_SLOW_SPEED         = 8;
-const HIT_SLOW_DURATION      = 0.6;
-const CHARGED_SLOW_SPEED     = 4;
-const CHARGED_SLOW_DURATION  = 1.0;
+const BASE_SPEED            = 16;
+const CHARGE_SPEED          = 20;
+const HIT_SLOW_SPEED        = 8;
+const HIT_SLOW_DURATION     = 0.6;
+const CHARGED_SLOW_SPEED    = 4;
+const CHARGED_SLOW_DURATION = 1.0;
 
 let isAttacking  = false;
 let isCharging   = false;
@@ -32,47 +33,46 @@ type ChargeAnimState = "none" | "charging" | "charged";
 let currentChargeAnimState: ChargeAnimState = "none";
 
 // ---------------------------------------------------------
-// SUARA — diputar di Client berdasarkan event dari Server
+// HELPER: Key karakter yang sedang diequip
 // ---------------------------------------------------------
-const SOUND_MISS  = "rbxassetid://104385197343883";
-const SOUND_WALL  = "rbxassetid://107536030334203";
-const SOUND_FLESH = "rbxassetid://71282231814253";
+function getEquippedKey(): string {
+	const key = player.GetAttribute("EquippedJurig") as string | undefined;
+	return key ?? DEFAULT_CHARACTER_KEY;
+}
 
+// ---------------------------------------------------------
+// SUARA — Dinamis berdasarkan karakter yang diequip
+// ---------------------------------------------------------
 function PlayLocalSound(soundId: string) {
 	const rootPart = player.Character?.FindFirstChild("HumanoidRootPart") as Part | undefined;
 	if (!rootPart) return;
-	const sound = new Instance("Sound");
-	sound.SoundId = soundId;
-	sound.Volume = 1;
-	sound.RollOffMaxDistance = 60;
-	sound.Parent = rootPart;
+	const sound                  = new Instance("Sound");
+	sound.SoundId                = soundId;
+	sound.Volume                 = 1;
+	sound.RollOffMaxDistance     = 60;
+	sound.Parent                 = rootPart;
 	sound.Play();
 	Debris.AddItem(sound, 3);
 }
 
-// Server memberitahu client suara apa yang harus dimainkan
+// Server memberi tahu client suara apa yang harus dimainkan.
 // Payload: "HitFlesh" | "HitWall" | "Miss"
 NotifyClient.OnClientEvent.Connect((eventType: unknown) => {
+	// Baca sound dari CharacterData setiap kali event diterima
+	// sehingga selalu sesuai dengan karakter yang aktif saat itu
+	const sounds = GetCharacterInfo(getEquippedKey()).Sounds;
 	if (eventType === "HitFlesh") {
-		PlayLocalSound(SOUND_FLESH);
+		PlayLocalSound(sounds.HitFlesh);
 	} else if (eventType === "HitWall") {
-		PlayLocalSound(SOUND_WALL);
+		PlayLocalSound(sounds.HitWall);
 	} else if (eventType === "Miss") {
-		PlayLocalSound(SOUND_MISS);
+		PlayLocalSound(sounds.Miss);
 	}
 });
 
 // ---------------------------------------------------------
-// ANIMASI JURIG
+// ANIMASI JURIG — Dimuat dari CharacterData
 // ---------------------------------------------------------
-const jurigAnimationIds = {
-	Hit1:       "rbxassetid://96515999112317",
-	Hit2:       "rbxassetid://75059937670248",
-	Charging:   "rbxassetid://127990702652676",
-	Charged:    "rbxassetid://121600231814274",
-	ChargedHit: "rbxassetid://99365271989430",
-};
-
 let loadedAnims = new Map<string, AnimationTrack>();
 let hitCount    = 0;
 let lastHitTime = 0;
@@ -84,16 +84,21 @@ function LoadJurigAnimations() {
 	const animator = humanoid?.FindFirstChild("Animator") as Animator | undefined;
 	if (!animator) return;
 
+	// Baca animation IDs dari CharacterData sesuai karakter yang diequip
+	const charKey   = getEquippedKey();
+	const charInfo  = GetCharacterInfo(charKey);
+	const animIds   = charInfo.Animations;
+
 	loadedAnims.clear();
-	for (const [name, id] of pairs(jurigAnimationIds)) {
-		const anim = new Instance("Animation");
-		anim.AnimationId = id;
-		const track = animator.LoadAnimation(anim);
-		track.Priority = Enum.AnimationPriority.Action;
+	for (const [name, id] of pairs(animIds)) {
+		const anim           = new Instance("Animation");
+		anim.AnimationId     = id as string;
+		const track          = animator.LoadAnimation(anim);
+		track.Priority       = Enum.AnimationPriority.Action;
 		if (name === "Charged") track.Looped = true;
-		loadedAnims.set(name, track);
+		loadedAnims.set(name as string, track);
 	}
-	print("[AnimController] Semua animasi Jurig dimuat.");
+	print(`[InputController] Animasi dimuat untuk: ${charInfo.Name} (${charKey})`);
 }
 
 function StopAllAnims(fadeDuration = 0.1) {
@@ -137,14 +142,14 @@ function ApplySlowAfterHit(slowSpeed: number, duration: number) {
 // VISUAL HITBOX
 // ---------------------------------------------------------
 function CreateHitboxVisual(dmgPoint: Attachment) {
-	const beam = new Instance("Part");
-	beam.Size = new Vector3(0.2, 0.2, 3);
-	beam.Color = Color3.fromRGB(255, 0, 0);
-	beam.Material = Enum.Material.Neon;
-	beam.Anchored = true;
-	beam.CanCollide = false;
-	beam.CFrame = dmgPoint.WorldCFrame;
-	beam.Parent = Workspace;
+	const beam         = new Instance("Part");
+	beam.Size          = new Vector3(0.2, 0.2, 3);
+	beam.Color         = Color3.fromRGB(255, 0, 0);
+	beam.Material      = Enum.Material.Neon;
+	beam.Anchored      = true;
+	beam.CanCollide    = false;
+	beam.CFrame        = dmgPoint.WorldCFrame;
+	beam.Parent        = Workspace;
 	Debris.AddItem(beam, 0.2);
 }
 
@@ -155,11 +160,11 @@ function executeAttack(chargeDuration: number) {
 	if (isAttacking) return;
 	if (player.Team?.Name !== "Jurig") return;
 
-	isAttacking = true;
-	isCharging  = false;
+	isAttacking            = true;
+	isCharging             = false;
 	currentChargeAnimState = "none";
 
-	const char = player.Character;
+	const char     = player.Character;
 	const dmgPoint = char?.FindFirstChild("DmgPoint", true) as Attachment | undefined;
 	if (dmgPoint) CreateHitboxVisual(dmgPoint);
 
@@ -173,7 +178,7 @@ function executeAttack(chargeDuration: number) {
 	} else {
 		const now = os.clock();
 		if (now - lastHitTime > 2) hitCount = 0;
-		hitCount = hitCount === 1 ? 2 : 1;
+		hitCount    = hitCount === 1 ? 2 : 1;
 		lastHitTime = now;
 		const animName = hitCount === 1 ? "Hit1" : "Hit2";
 		PlayAnim(animName, 0.05);
@@ -182,9 +187,10 @@ function executeAttack(chargeDuration: number) {
 		print(`[Attack] Hit (${animName}) | Tahan: ${string.format("%.2f", chargeDuration)}s`);
 	}
 
-	// Suara Miss dimainkan dulu — server akan override ke HitFlesh/HitWall
-	// jika hitbox benar-benar kena sesuatu (via NotifyClient)
-	PlayLocalSound(SOUND_MISS);
+	// Suara Miss (optimistik) — server akan kirim override HitFlesh/HitWall
+	// jika hitbox benar-benar mengenai sesuatu
+	const sounds = GetCharacterInfo(getEquippedKey()).Sounds;
+	PlayLocalSound(sounds.Miss);
 
 	task.wait(ATTACK_COOLDOWN);
 	isAttacking = false;
@@ -198,20 +204,20 @@ function handleHit(actionName: string, inputState: Enum.UserInputState, inputObj
 
 	if (inputState === Enum.UserInputState.Begin) {
 		if (isAttacking) return;
-		isCharging = true;
-		chargeStartTime = os.clock();
+		isCharging             = true;
+		chargeStartTime        = os.clock();
 		currentChargeAnimState = "none";
 
 	} else if (inputState === Enum.UserInputState.End) {
 		if (!isCharging) return;
-		isCharging = false;
+		isCharging             = false;
 		currentChargeAnimState = "none";
 		StopAllAnims(0.05);
 		executeAttack(os.clock() - chargeStartTime);
 
 	} else if (inputState === Enum.UserInputState.Cancel) {
 		if (!isCharging) return;
-		isCharging = false;
+		isCharging             = false;
 		currentChargeAnimState = "none";
 		StopAllAnims(0.1);
 		SetJurigSpeed(BASE_SPEED);
@@ -219,7 +225,7 @@ function handleHit(actionName: string, inputState: Enum.UserInputState, inputObj
 }
 
 // ---------------------------------------------------------
-// HEARTBEAT: Transisi animasi + auto-release saat MAX_CHARGE_TIME
+// HEARTBEAT: Transisi animasi + auto-release MAX_CHARGE_TIME
 // ---------------------------------------------------------
 RunService.Heartbeat.Connect((_dt) => {
 	if (!isCharging || isAttacking) return;
@@ -227,7 +233,6 @@ RunService.Heartbeat.Connect((_dt) => {
 
 	const elapsed = os.clock() - chargeStartTime;
 
-	// AUTO-RELEASE: Charge terlalu lama → eksekusi otomatis
 	if (elapsed >= MAX_CHARGE_TIME) {
 		print(`[Attack] Auto-release ChargedHit setelah ${string.format("%.2f", elapsed)}s`);
 		StopAllAnims(0.05);
@@ -235,7 +240,6 @@ RunService.Heartbeat.Connect((_dt) => {
 		return;
 	}
 
-	// Transisi animasi — hanya update jika state berubah
 	if (elapsed < CHARGE_TIME) {
 		if (currentChargeAnimState !== "charging") {
 			currentChargeAnimState = "charging";
@@ -320,6 +324,16 @@ player.CharacterAdded.Connect(() => {
 	if (player.Team?.Name === "Jurig") LoadJurigAnimations();
 	SetupMobileButtons();
 });
+
+// Re-load animasi otomatis saat pemain mengganti karakter Jurig
+// (misal ganti dari JurigDefault ke Kuntilanak dari lobby)
+player.GetAttributeChangedSignal("EquippedJurig").Connect(() => {
+	if (player.Team?.Name === "Jurig") {
+		print("[InputController] EquippedJurig berubah — reload animasi.");
+		LoadJurigAnimations();
+	}
+});
+
 SetupMobileButtons();
 
 // ---------------------------------------------------------
@@ -337,7 +351,7 @@ function ScanForInteractables() {
 	const myPos = rootPart.Position;
 	let closestAction: string | undefined = undefined;
 	let closestTitle = "Aksi";
-	let minDistance = math.huge;
+	let minDistance  = math.huge;
 
 	if (teamName === "Baraya") {
 		for (const item of Workspace.GetDescendants()) {
