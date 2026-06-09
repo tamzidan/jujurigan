@@ -27,6 +27,7 @@ interface ActiveHitbox {
 
 const jurigHitboxes    = new Map<Player, ActiveHitbox>();
 const currentAttackTypes = new Map<Player, "Hit" | "ChargedHit">();
+const hitTargetsPerSwing = new Map<Player, Set<Player>>();
 
 // ---------------------------------------------------------
 // HELPER: Ambil key karakter yang sedang diequip player
@@ -75,21 +76,44 @@ function setupHitbox(jurigPlayer: Player, character: Model) {
 
 	const hitbox       = new RaycastHitbox(attachPart);
 	hitbox.Visualizer  = true; // Ganti false saat release
+	// Mode PartMode diperlukan agar hitbox bisa mendeteksi part yang tidak memiliki Humanoid (misal dinding)
+	hitbox.DetectionMode = RaycastHitbox.DetectionMode.PartMode;
 
 	const rayParams = new RaycastParams();
 	rayParams.FilterType = Enum.RaycastFilterType.Exclude;
 	rayParams.FilterDescendantsInstances = [character];
 	hitbox.RaycastParams = rayParams;
 
-	hitbox.OnHit.Connect((hitPart: BasePart, humanoid?: Humanoid) => {
+	hitbox.OnHit.Connect((hitPart: BasePart, _humanoid?: Humanoid) => {
 		const currentAttackType = currentAttackTypes.get(jurigPlayer);
 		if (!currentAttackType) return;
 
-		if (humanoid) {
-			const targetChar = humanoid.Parent;
+		// Cari Humanoid secara manual karena PartMode tidak memberikan humanoid secara langsung
+		let current: Instance | undefined = hitPart;
+		let hitHumanoid: Humanoid | undefined;
+		while (current && current !== Workspace) {
+			const hum = current.FindFirstChildWhichIsA("Humanoid");
+			if (hum) {
+				hitHumanoid = hum as Humanoid;
+				break;
+			}
+			current = current.Parent;
+		}
+
+		if (hitHumanoid) {
+			const targetChar = hitHumanoid.Parent;
 			if (!targetChar) return;
 			const targetPlayer = Players.GetPlayerFromCharacter(targetChar);
 			if (!targetPlayer || targetPlayer.Team?.Name !== "Baraya") return;
+
+			// Hindari damage ganda pada player yang sama dalam 1 kali serangan
+			let hitSet = hitTargetsPerSwing.get(jurigPlayer);
+			if (!hitSet) {
+				hitSet = new Set<Player>();
+				hitTargetsPerSwing.set(jurigPlayer, hitSet);
+			}
+			if (hitSet.has(targetPlayer)) return;
+			hitSet.add(targetPlayer);
 
 			const currentState = StateManager.GetState(targetPlayer);
 
@@ -161,6 +185,7 @@ Players.PlayerAdded.Connect((player) => {
 Players.PlayerRemoving.Connect((player) => {
 	jurigHitboxes.delete(player);
 	currentAttackTypes.delete(player);
+	hitTargetsPerSwing.delete(player);
 });
 
 // ---------------------------------------------------------
@@ -191,11 +216,13 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 				: charInfo.Combat.HitDuration;
 
 			currentAttackTypes.set(player, action as "Hit" | "ChargedHit");
+			hitTargetsPerSwing.set(player, new Set<Player>());
 			hitbox.HitStart();
 
 			task.delay(duration, () => {
 				hitbox.HitStop();
 				currentAttackTypes.delete(player);
+				hitTargetsPerSwing.delete(player);
 			});
 
 		} else if (action === "Carry") {
