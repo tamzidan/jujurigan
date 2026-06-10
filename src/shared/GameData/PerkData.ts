@@ -48,7 +48,7 @@ export const PerkData: { Baraya: PerkCategory; Jurig: PerkCategory } = {
 		},
 		PecahBelah: {
 			Name: "Niat Jahat",
-			Description: "Memukul Generator akan merusak progress perbaikannya.",
+			Description: "Memukul Objek Ritual akan merusak progress penyelesaiannya.",
 			MaxLevel: 3,
 			BaseCost: 600,
 		},

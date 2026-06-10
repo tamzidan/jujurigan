@@ -121,4 +121,34 @@ export namespace StateManager {
 			});
 		}
 	}
+
+	// FUNGSI BARU: Efek Stun untuk Baraya
+	export function StunBaraya(player: Player, duration: number) {
+		const character = player.Character;
+		if (character && character.FindFirstChild("Humanoid")) {
+			if (player.GetAttribute("IsStunned")) return;
+
+			print(`>>> ${player.Name} (BARAYA) TERKENA STUN! <<<`);
+			player.SetAttribute("IsStunned", true);
+
+			const humanoid = character.FindFirstChild("Humanoid") as Humanoid;
+			const originalSpeed = humanoid.WalkSpeed;
+
+			// Bekukan Baraya
+			humanoid.WalkSpeed = 0;
+			humanoid.JumpPower = 0;
+
+			task.delay(duration, () => {
+				if (player && player.Character && player.GetAttribute("IsStunned")) {
+					const currentHumanoid = player.Character.FindFirstChild("Humanoid") as Humanoid | undefined;
+					if (currentHumanoid) {
+						// Panggil ulang SetState agar kecepatan kembali sesuai kondisi (Lari/Jongkok)
+						SetState(player, GetState(player));
+					}
+					player.SetAttribute("IsStunned", false);
+					print(`${player.Name} (BARAYA) pulih dari stun.`);
+				}
+			});
+		}
+	}
 }

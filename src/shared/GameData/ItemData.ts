@@ -24,7 +24,7 @@ export const ItemData: Record<string, ItemInfo> = {
 	Toolbox: {
 		Name: "Kotak Perkakas",
 		Type: "Repair",
-		Description: "Meningkatkan kecepatan memperbaiki Generator.",
+		Description: "Meningkatkan kecepatan menyelesaikan Ritual.",
 		Cost: 120,
 		Uses: 1,
 	},

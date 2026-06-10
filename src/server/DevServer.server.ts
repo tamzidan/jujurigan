@@ -100,6 +100,48 @@ DevAction.OnServerEvent.Connect((player, action) => {
 			warn("Model 'Dummy' tidak ditemukan di ServerStorage, atau karakter belum spawn.");
 		}
 
+	} else if (action === "SpawnDummyRitual") {
+		const char = player.Character;
+		const root = char?.FindFirstChild("HumanoidRootPart") as Part | undefined;
+
+		if (root) {
+			const ritualObj = new Instance("Model");
+			ritualObj.Name = "RitualObject";
+			ritualObj.SetAttribute("Progress", 0);
+
+			const core = new Instance("Part");
+			core.Name = "Core";
+			core.Size = new Vector3(4, 4, 4);
+			core.Color = new Color3(0.2, 0.2, 0.2);
+			core.Anchored = true;
+			core.CFrame = root.CFrame.mul(new CFrame(0, 0, -8));
+			core.Parent = ritualObj;
+			ritualObj.PrimaryPart = core;
+
+			// Buat 4 slot di sisi-sisinya
+			const offsets = [
+				new CFrame(0, -1.5, 3), // Depan
+				new CFrame(0, -1.5, -3).mul(CFrame.Angles(0, math.rad(180), 0)), // Belakang
+				new CFrame(3, -1.5, 0).mul(CFrame.Angles(0, math.rad(90), 0)), // Kanan
+				new CFrame(-3, -1.5, 0).mul(CFrame.Angles(0, math.rad(-90), 0)), // Kiri
+			];
+
+			for (let i = 0; i < 4; i++) {
+				const slot = new Instance("Part");
+				slot.Name = "RitualSlot" + (i + 1);
+				slot.Size = new Vector3(2, 0.2, 2);
+				slot.Anchored = true;
+				slot.CanCollide = false;
+				slot.Transparency = 0.5;
+				slot.Color = new Color3(1, 0, 0);
+				slot.CFrame = core.CFrame.mul(offsets[i]);
+				slot.Parent = ritualObj;
+			}
+
+			ritualObj.Parent = Workspace;
+			print(">>> DEV: Dummy Ritual Object berhasil di-spawn!");
+		}
+
 	} else if (action === "SetInjured") {
 		StateManager.SetState(player, "Injured");
 		

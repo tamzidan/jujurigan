@@ -31,14 +31,23 @@ downIdleAnim.AnimationId = "rbxassetid://134552238763381";
 const downMoveAnim = new Instance("Animation");
 downMoveAnim.AnimationId = "rbxassetid://132750383282272";
 
-const generatorAnim = new Instance("Animation");
-generatorAnim.AnimationId = "rbxassetid://105099851016113";
+const ritualAnim = new Instance("Animation");
+ritualAnim.AnimationId = "rbxassetid://105099851016113";
 
 const barayaCarryStartAnim = new Instance("Animation");
 barayaCarryStartAnim.AnimationId = "rbxassetid://136698962412099";
 
 const barayaCarryIdleAnim = new Instance("Animation");
 barayaCarryIdleAnim.AnimationId = "rbxassetid://70854378825630";
+
+const barayaStunStartAnim = new Instance("Animation");
+barayaStunStartAnim.AnimationId = "rbxassetid://77817294824883";
+
+const barayaStunLoopAnim = new Instance("Animation");
+barayaStunLoopAnim.AnimationId = "rbxassetid://120296808547646";
+
+const barayaStunEndAnim = new Instance("Animation");
+barayaStunEndAnim.AnimationId = "rbxassetid://97962248551821";
 
 // Variabel penampung Track Animasi Baraya
 let loadedSprint:     AnimationTrack | undefined = undefined;
@@ -50,9 +59,12 @@ let loadedInjuredWalk: AnimationTrack | undefined = undefined;
 let loadedInjuredRun:  AnimationTrack | undefined = undefined;
 let loadedDownIdle:    AnimationTrack | undefined = undefined;
 let loadedDownMove:    AnimationTrack | undefined = undefined;
-let loadedGenerator:   AnimationTrack | undefined = undefined;
+let loadedRitual:      AnimationTrack | undefined = undefined;
 let loadedBarayaCarryStart: AnimationTrack | undefined = undefined;
 let loadedBarayaCarryIdle:  AnimationTrack | undefined = undefined;
+let loadedBarayaStunStart:  AnimationTrack | undefined = undefined;
+let loadedBarayaStunLoop:   AnimationTrack | undefined = undefined;
+let loadedBarayaStunEnd:    AnimationTrack | undefined = undefined;
 
 // ---------------------------------------------------------
 // ANIMASI JURIG
@@ -198,9 +210,9 @@ function setupBarayaAnimations(character: Model) {
 	loadedDownMove.Priority = Enum.AnimationPriority.Action;
 	loadedDownMove.Looped = true;
 
-	loadedGenerator = animator.LoadAnimation(generatorAnim);
-	loadedGenerator.Priority = Enum.AnimationPriority.Action;
-	loadedGenerator.Looped = true;
+	loadedRitual = animator.LoadAnimation(ritualAnim);
+	loadedRitual.Priority = Enum.AnimationPriority.Action;
+	loadedRitual.Looped = true;
 
 	loadedBarayaCarryStart = animator.LoadAnimation(barayaCarryStartAnim);
 	loadedBarayaCarryStart.Priority = Enum.AnimationPriority.Action;
@@ -209,20 +221,32 @@ function setupBarayaAnimations(character: Model) {
 	loadedBarayaCarryIdle.Priority = Enum.AnimationPriority.Action;
 	loadedBarayaCarryIdle.Looped = true;
 
+	loadedBarayaStunStart = animator.LoadAnimation(barayaStunStartAnim);
+	loadedBarayaStunStart.Priority = Enum.AnimationPriority.Action4;
+	loadedBarayaStunStart.Looped = false;
+
+	loadedBarayaStunLoop = animator.LoadAnimation(barayaStunLoopAnim);
+	loadedBarayaStunLoop.Priority = Enum.AnimationPriority.Action4;
+	loadedBarayaStunLoop.Looped = true;
+
+	loadedBarayaStunEnd = animator.LoadAnimation(barayaStunEndAnim);
+	loadedBarayaStunEnd.Priority = Enum.AnimationPriority.Action4;
+	loadedBarayaStunEnd.Looped = false;
+
 	humanoid.Running.Connect((speed) => {
 		updateBarayaMovement(speed);
 	});
 }
 
-function PlayBarayaAction(actionName: "Generator") {
-	if (actionName === "Generator") {
-		if (loadedGenerator && !loadedGenerator.IsPlaying) loadedGenerator.Play();
+function PlayBarayaAction(actionName: "Ritual") {
+	if (actionName === "Ritual") {
+		if (loadedRitual && !loadedRitual.IsPlaying) loadedRitual.Play();
 	}
 }
 
-function StopBarayaAction(actionName: "Generator") {
-	if (actionName === "Generator") {
-		if (loadedGenerator && loadedGenerator.IsPlaying) loadedGenerator.Stop();
+function StopBarayaAction(actionName: "Ritual") {
+	if (actionName === "Ritual") {
+		if (loadedRitual && loadedRitual.IsPlaying) loadedRitual.Stop();
 	}
 }
 
@@ -336,12 +360,36 @@ player.GetAttributeChangedSignal("HealthState").Connect(() => {
 	}
 });
 
-player.GetAttributeChangedSignal("IsRepairing").Connect(() => {
-	const isRepairing = player.GetAttribute("IsRepairing") as boolean;
-	if (isRepairing) {
-		PlayBarayaAction("Generator");
+player.GetAttributeChangedSignal("IsStunned").Connect(() => {
+	const isStunned = player.GetAttribute("IsStunned") as boolean;
+	if (player.Team?.Name === "Baraya") {
+		if (isStunned) {
+			StopBarayaAction("Ritual");
+			if (loadedBarayaStunStart && loadedBarayaStunLoop) {
+				loadedBarayaStunStart.Play(0);
+				loadedBarayaStunStart.Stopped.Once(() => {
+					if (player.GetAttribute("IsStunned")) {
+						loadedBarayaStunLoop!.Play(0);
+					}
+				});
+			}
+		} else {
+			if (loadedBarayaStunStart?.IsPlaying) loadedBarayaStunStart.Stop();
+			if (loadedBarayaStunLoop?.IsPlaying) loadedBarayaStunLoop.Stop();
+			
+			if (loadedBarayaStunEnd) {
+				loadedBarayaStunEnd.Play(0);
+			}
+		}
+	}
+});
+
+player.GetAttributeChangedSignal("IsRitualing").Connect(() => {
+	const isRitualing = player.GetAttribute("IsRitualing") as boolean;
+	if (isRitualing) {
+		PlayBarayaAction("Ritual");
 	} else {
-		StopBarayaAction("Generator");
+		StopBarayaAction("Ritual");
 	}
 });
 

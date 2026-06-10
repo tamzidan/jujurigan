@@ -10,12 +10,12 @@ const REPAIR_SPEED = 5;
 const PALLET_RANGE = 6;
 const VAULT_RANGE = 4;
 
-const TARGET_GENERATOR = 1;
-let completedGenerators = 0;
+const TARGET_RITUAL = 1;
+let completedRituals = 0;
 let isGateOpen = false;
 
 // Di TypeScript kita menggunakan Map yang type-safe untuk objek seperti ini
-const activeRepairs = new Map<Player, BasePart>();
+const activeRituals = new Map<Player, Instance>();
 
 Workspace.DescendantAdded.Connect((desc) => {
 	if (desc.Name === "EscapeZone" && desc.IsA("BasePart")) {
@@ -37,7 +37,7 @@ Workspace.DescendantAdded.Connect((desc) => {
 	}
 });
 
-RequestAction.OnServerEvent.Connect((player, action) => {
+RequestAction.OnServerEvent.Connect((player, action, targetObject, extraArg) => {
 	const char = player.Character;
 	const rootPart = char?.FindFirstChild("HumanoidRootPart") as Part | undefined;
 	if (!char || !rootPart) return;
@@ -46,26 +46,72 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 	const state = StateManager.GetState(player);
 
 	if (player.Team && player.Team.Name === "Baraya") {
-		if (action === "StartRepair") {
+		if (action === "StartRitual") {
 			if (state === "Healthy" || state === "Injured") {
-				for (const item of Workspace.GetDescendants()) {
-					if (item.Name === "Generator" && item.IsA("BasePart")) {
-						const distance = myPos.sub(item.Position).Magnitude;
-						if (distance <= REPAIR_RANGE) {
-							const progress = (item.GetAttribute("Progress") as number) || 0;
-							if (progress < 100) {
-								activeRepairs.set(player, item);
-								print(`${player.Name} mulai memperbaiki Generator`);
+				const slot = targetObject as Instance;
+				if (slot && slot.Name.match("^RitualSlot")[0]) {
+					const pos = slot.IsA("Attachment") ? slot.WorldPosition : (slot as BasePart).Position;
+					const cframe = slot.IsA("Attachment") ? slot.WorldCFrame : (slot as BasePart).CFrame;
+					const distance = myPos.sub(pos).Magnitude;
+					
+					if (distance <= REPAIR_RANGE) {
+						let taken = false;
+						for (const [p, s] of activeRituals) {
+							if (s === slot) { taken = true; break; }
+						}
+						
+						if (!taken) {
+							const ritualObj = slot.Parent;
+							if (ritualObj) {
+								const progress = (ritualObj.GetAttribute("Progress") as number) || 0;
+								if (progress < 100) {
+									activeRituals.set(player, slot);
+									rootPart.Anchored = true;
+									// Tambahkan offset Y agar tidak tenggelam ke tanah
+									rootPart.CFrame = cframe.add(new Vector3(0, 3, 0)); 
+									print(`${player.Name} mulai melakukan Ritual`);
+								}
 							}
-							break;
 						}
 					}
 				}
 			}
-		} else if (action === "StopRepair") {
-			if (activeRepairs.has(player)) {
-				activeRepairs.delete(player);
-				print(`${player.Name} berhenti memperbaiki`);
+		} else if (action === "SkillCheckResult") {
+			const result = targetObject as string; // "Great", "Good", or "Fail"
+			const ritualSlot = extraArg as Instance | undefined;
+			
+			if (ritualSlot && ritualSlot.Parent && activeRituals.has(player)) {
+				const ritualObj = ritualSlot.Parent;
+				let currentProgress = (ritualObj.GetAttribute("Progress") as number) || 0;
+				
+				if (result === "Great") {
+					currentProgress += 3;
+					if (currentProgress > 100) currentProgress = 100;
+					ritualObj.SetAttribute("Progress", currentProgress);
+					print(`${player.Name} mendapat bonus progress (+3)!`);
+				} else if (result === "Fail") {
+					currentProgress -= 5;
+					if (currentProgress < 0) currentProgress = 0;
+					ritualObj.SetAttribute("Progress", currentProgress);
+					print(`${player.Name} mendapat penalti progress (-5)!`);
+					
+					// Batalkan ritual
+					activeRituals.delete(player);
+					rootPart.Anchored = false;
+					player.SetAttribute("IsRitualing", false);
+					print(`${player.Name} gagal Skill Check, ritual terputus!`);
+					
+					// Beri efek stun
+					StateManager.StunBaraya(player, 2);
+				}
+				// Jika "Good", tidak ada bonus atau penalti
+			}
+		} else if (action === "StopRitual") {
+			if (activeRituals.has(player)) {
+				activeRituals.delete(player);
+				rootPart.Anchored = false;
+				player.SetAttribute("IsRitualing", false);
+				print(`${player.Name} berhenti ritual`);
 			}
 		} else if (action === "DropPallet") {
 			if (state === "Healthy" || state === "Injured") {
@@ -145,12 +191,14 @@ RequestAction.OnServerEvent.Connect((player, action) => {
 });
 
 RunService.Heartbeat.Connect((deltaTime) => {
-	for (const [p, generator] of activeRepairs) {
+	for (const [p, slot] of activeRituals) {
 		const char = p.Character;
 		const rootPart = char?.FindFirstChild("HumanoidRootPart") as Part | undefined;
+		const ritualObj = slot.Parent;
 
-		if (!char || !rootPart) {
-			activeRepairs.delete(p);
+		if (!char || !rootPart || !ritualObj) {
+			activeRituals.delete(p);
+			if (rootPart) rootPart.Anchored = false;
 			continue;
 		}
 
@@ -161,30 +209,46 @@ RunService.Heartbeat.Connect((deltaTime) => {
 			currentState === "Hooked" ||
 			currentState === "Dead"
 		) {
-			activeRepairs.delete(p);
+			activeRituals.delete(p);
+			rootPart.Anchored = false;
+			p.SetAttribute("IsRitualing", false);
 			continue;
 		}
 
-		const distance = rootPart.Position.sub(generator.Position).Magnitude;
+		const pos = slot.IsA("Attachment") ? slot.WorldPosition : (slot as BasePart).Position;
+		const distance = rootPart.Position.sub(pos).Magnitude;
 		if (distance > REPAIR_RANGE) {
-			activeRepairs.delete(p);
+			activeRituals.delete(p);
+			rootPart.Anchored = false;
+			p.SetAttribute("IsRitualing", false);
 			continue;
 		}
 
-		let currentProgress = (generator.GetAttribute("Progress") as number) || 0;
+		let currentProgress = (ritualObj.GetAttribute("Progress") as number) || 0;
 		if (currentProgress < 100) {
 			currentProgress += REPAIR_SPEED * deltaTime;
 
 			if (currentProgress >= 100) {
 				currentProgress = 100;
-				activeRepairs.delete(p);
+				
+				// Selesaikan ritual untuk semua pemain di ritualObj ini
+				for (const [otherP, otherSlot] of activeRituals) {
+					if (otherSlot.Parent === ritualObj) {
+						activeRituals.delete(otherP);
+						const otherRoot = otherP.Character?.FindFirstChild("HumanoidRootPart") as Part | undefined;
+						if (otherRoot) otherRoot.Anchored = false;
+						otherP.SetAttribute("IsRitualing", false);
+					}
+				}
 
-				generator.BrickColor = new BrickColor("Bright yellow");
-				generator.Material = Enum.Material.Neon;
-				print("Satu Generator telah selesai diperbaiki!");
+				if (ritualObj.IsA("BasePart")) {
+					ritualObj.BrickColor = new BrickColor("Bright yellow");
+					ritualObj.Material = Enum.Material.Neon;
+				}
+				print("Satu Objek Ritual telah diselesaikan!");
 
-				completedGenerators += 1;
-				if (completedGenerators >= TARGET_GENERATOR && !isGateOpen) {
+				completedRituals += 1;
+				if (completedRituals >= TARGET_RITUAL && !isGateOpen) {
 					isGateOpen = true;
 					print("GERBANG TERBUKA! BARAYA SEGERA KABUR!");
 
@@ -197,7 +261,7 @@ RunService.Heartbeat.Connect((deltaTime) => {
 					}
 				}
 			}
-			generator.SetAttribute("Progress", currentProgress);
+			ritualObj.SetAttribute("Progress", currentProgress);
 		}
 	}
 });
@@ -205,8 +269,13 @@ RunService.Heartbeat.Connect((deltaTime) => {
 Workspace.ChildRemoved.Connect((child) => {
 	// Di TS kita gunakan string.match untuk meniru pola pencarian di Lua
 	if (child.Name.match("Map_")[0]) {
-		completedGenerators = 0;
+		completedRituals = 0;
 		isGateOpen = false;
-		activeRepairs.clear();
+		for (const [p, _] of activeRituals) {
+			const rootPart = p.Character?.FindFirstChild("HumanoidRootPart") as Part | undefined;
+			if (rootPart) rootPart.Anchored = false;
+			p.SetAttribute("IsRitualing", false);
+		}
+		activeRituals.clear();
 	}
 });

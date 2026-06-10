@@ -67,7 +67,7 @@ export namespace MapManager {
 			spawnPoint.Destroy();
 		}
 
-		// (Nantinya, Anda bisa menambahkan logika yang sama di sini untuk GeneratorSpawn, PalletSpawn, dll)
+		// (Nantinya, Anda bisa menambahkan logika yang sama di sini untuk RitualSpawn, PalletSpawn, dll)
 
 		return true;
 	}

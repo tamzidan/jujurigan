@@ -51,7 +51,7 @@ function DevUI() {
 			{/* MENU PANEL (Hanya muncul jika isOpen = true) */}
 			{isOpen && (
 				<frame
-					Size={new UDim2(0, 200, 0, 450)} // Ukuran diperpanjang menjadi 450
+					Size={new UDim2(0, 200, 0, 500)} // Ukuran diperpanjang menjadi 500
 					Position={new UDim2(1, -210, 0, 50)}
 					BackgroundColor3={COLORS.bg}
 					BorderSizePixel={0}
@@ -113,6 +113,15 @@ function DevUI() {
 						TextColor3={COLORS.text}
 						Font={Enum.Font.GothamMedium}
 						Event={{ MouseButton1Click: () => DevAction.FireServer("SpawnDummy") }}
+					><uicorner CornerRadius={new UDim(0, 4)} /></textbutton>
+
+					<textbutton
+						Text="🗿 Spawn Ritual"
+						Size={new UDim2(1, 0, 0, 35)}
+						BackgroundColor3={COLORS.btnBase}
+						TextColor3={COLORS.text}
+						Font={Enum.Font.GothamMedium}
+						Event={{ MouseButton1Click: () => DevAction.FireServer("SpawnDummyRitual") }}
 					><uicorner CornerRadius={new UDim(0, 4)} /></textbutton>
 
 					<textbutton
