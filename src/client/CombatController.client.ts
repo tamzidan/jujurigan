@@ -1,4 +1,4 @@
-import { ContextActionService, ReplicatedStorage, Players, RunService, Workspace, Debris } from "@rbxts/services";
+import { ContextActionService, ReplicatedStorage, Players, RunService, Workspace, Debris, UserInputService } from "@rbxts/services";
 import { GetCharacterInfo, DEFAULT_CHARACTER_KEY } from "../shared/GameData/CharacterData";
 import RaycastHitbox from "@rbxts/raycast-hitbox";
 import type { HitboxObject } from "@rbxts/raycast-hitbox";
@@ -49,15 +49,19 @@ function resolveHitboxPart(
 	character: Model,
 	hitboxPart: "Tool" | "RightArm",
 ): BasePart | undefined {
+	const fallbackPart = character.FindFirstChild("Right Arm") 
+		|| character.FindFirstChild("RightHand") 
+		|| character.FindFirstChild("RightLowerArm");
+
 	if (hitboxPart === "Tool") {
 		const tool = character.FindFirstChildWhichIsA("Tool") as Tool | undefined;
 		if (tool) {
 			return tool.FindFirstChildWhichIsA("BasePart") as BasePart | undefined;
 		}
-		// Fallback diam-diam ke Right Arm jika Tool belum di-equip (menghindari spam warning di log)
-		return character.FindFirstChild("Right Arm") as BasePart | undefined;
+		// Fallback diam-diam ke part lengan jika Tool belum di-equip (menghindari spam warning di log)
+		return fallbackPart as BasePart | undefined;
 	} else {
-		return character.FindFirstChild("Right Arm") as BasePart | undefined;
+		return fallbackPart as BasePart | undefined;
 	}
 }
 
@@ -235,6 +239,7 @@ let hasHitWallThisSwing = false;
 // EKSEKUSI SERANGAN
 // ---------------------------------------------------------
 function executeAttack(chargeDuration: number) {
+	print(`>>> executeAttack berjalan. ChargeDuration: ${chargeDuration}, isAttacking: ${isAttacking}, Team: ${player.Team?.Name}`);
 	if (isAttacking) return;
 	if (player.Team?.Name !== "Jurig") return;
 
@@ -265,6 +270,7 @@ function executeAttack(chargeDuration: number) {
 
 	// Client-side hitbox logic
 	if (myHitbox) {
+		print(">>> Hitbox ditemukan, memulai HitStart...");
 		const [success] = pcall(() => { myHitbox!.HitStart(); });
 		if (success) {
 			currentAttackType = actionType;
@@ -277,7 +283,11 @@ function executeAttack(chargeDuration: number) {
 				currentAttackType = undefined;
 				hitTargetsPerSwing.clear();
 			});
+		} else {
+			warn(">>> GAGAL MENJALANKAN HitStart()");
 		}
+	} else {
+		warn(">>> ERROR: myHitbox KOSONG! Hitbox tidak akan mengenai apa-apa.");
 	}
 
 	// Visual/Audio for others (and validation)
@@ -294,6 +304,7 @@ function executeAttack(chargeDuration: number) {
 // HANDLE HIT INPUT
 // ---------------------------------------------------------
 function handleHit(actionName: string, inputState: Enum.UserInputState, inputObject: InputObject) {
+	print(`>>> handleHit dipanggil! Action: ${actionName}, State: ${inputState.Name}`);
 	if (player.Team?.Name !== "Jurig") return;
 
 	if (inputState === Enum.UserInputState.Begin) {
@@ -358,15 +369,33 @@ RunService.Heartbeat.Connect((_dt) => {
 // ---------------------------------------------------------
 // BINDINGS & LIFECYCLE
 // ---------------------------------------------------------
+let inputConnectionsSetup = false;
+
 function SetupJurigCombat() {
 	ContextActionService.UnbindAction("HitAction");
 	
 	if (player.Team?.Name === "Jurig") {
-		ContextActionService.BindAction("HitAction", handleHit, true,
-			Enum.UserInputType.MouseButton1, Enum.KeyCode.ButtonR2);
+		// Bind mobile touch button with ContextActionService
+		ContextActionService.BindAction("HitAction", handleHit, true, Enum.KeyCode.ButtonR2);
 		ContextActionService.SetTitle("HitAction", "Pukul");
 		ContextActionService.SetPosition("HitAction", new UDim2(0.2, 0, 0.65, 0));
 		
+		if (!inputConnectionsSetup) {
+			inputConnectionsSetup = true;
+			UserInputService.InputBegan.Connect((inputObject, gameProcessed) => {
+				if (UserInputService.GetFocusedTextBox()) return; // Jangan serang kalau lagi ngetik chat
+				if (inputObject.UserInputType === Enum.UserInputType.MouseButton1 || inputObject.KeyCode === Enum.KeyCode.ButtonR2) {
+					handleHit("HitAction", Enum.UserInputState.Begin, inputObject);
+				}
+			});
+			UserInputService.InputEnded.Connect((inputObject, gameProcessed) => {
+				if (UserInputService.GetFocusedTextBox()) return;
+				if (inputObject.UserInputType === Enum.UserInputType.MouseButton1 || inputObject.KeyCode === Enum.KeyCode.ButtonR2) {
+					handleHit("HitAction", Enum.UserInputState.End, inputObject);
+				}
+			});
+		}
+
 		const char = player.Character;
 		if (char) {
 			LoadJurigAnimations();
@@ -384,10 +413,17 @@ player.CharacterAdded.Connect((char) => {
 
 		char.ChildAdded.Connect((child) => {
 			if (child.IsA("Tool")) {
+				child.ManualActivationOnly = true;
 				task.wait(0.1);
 				setupHitbox(char);
 			}
 		});
+		
+		// Periksa kalau Tool sudah ada dari awal
+		const existingTool = char.FindFirstChildWhichIsA("Tool");
+		if (existingTool) {
+			existingTool.ManualActivationOnly = true;
+		}
 	}
 });
 
